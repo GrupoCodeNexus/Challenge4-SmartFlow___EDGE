@@ -22,7 +22,7 @@ NEXUSCODE_ENTITY_TYPE = "Acess"
 # Mapeamento de IDs para Nomes
 ID_TO_NAME_MAP = {
     "B3 9A 3A DA": "Matheus Eiki",
-    "D3 16 CF 9A": "Ana Silva",
+    "D3 16 CF 9A": "Ana Paula",
     "4D 2E AB 10": "Carlos Pereira",
     "BA AD DF 86": "Beatriz Lima",
     "46 A2 8A 3F": "Fernando Costa",
@@ -37,8 +37,8 @@ ATTRIBUTES_FOR_SUMMARY_COUNTS = ['aberto', 'fechado']
 ATTRIBUTES_FOR_LOG = ['permitido', 'negado', 'aberto', 'fechado', 'state']
 
 # AJUSTADO PARA O LIMITE DO SEU FIWARE (100)
-LASTN_LOG_ENTRIES = 100 
-LASTN_FOR_SUMMARY_COUNTS = 100 
+LASTN_LOG_ENTRIES = 100
+LASTN_FOR_SUMMARY_COUNTS = 100
 
 FIWARE_HEADERS = {
     'fiware-service': FIWARE_SERVICE,
@@ -104,8 +104,8 @@ def convert_utc_to_sao_paulo(timestamp_str):
 # --- Criação do App Flask e Dash ---
 server = Flask(__name__)
 
-app = dash.Dash(__name__, server=server, url_base_pathname="/dashboard/", 
-                 external_stylesheets=[dbc.themes.BOOTSTRAP])
+app = dash.Dash(__name__, server=server, url_base_pathname="/dashboard/",
+                external_stylesheets=[dbc.themes.BOOTSTRAP])
 
 app.title = "NEXUScode3 Dashboard"
 
@@ -113,7 +113,7 @@ app.title = "NEXUScode3 Dashboard"
 app.layout = dbc.Container([
     html.H1("SmartFlow - Carrinho 3", className="text-center my-4"),
 
-    dcc.Interval(id="interval-component", interval=5000, n_intervals=0),
+    dcc.Interval(id="interval-component", interval=10000, n_intervals=0),
 
     dbc.Row([
         dbc.Col(
@@ -121,7 +121,7 @@ app.layout = dbc.Container([
                 dbc.CardHeader("Estado Atual do Dispositivo"),
                 dbc.CardBody([
                     # Texto do estado será branco devido a `text-white`
-                    html.H4(id="estado-card-title", className="card-title text-center text-white"), 
+                    html.H4(id="estado-card-title", className="card-title text-center text-white"),
                     html.P("Última atualização:", className="card-text text-center text-white", style={"font-size": "0.9em"}),
                     html.P(id="timestamp-card", className="card-text text-center text-white", style={"font-size": "0.9em"})
                 ])
@@ -228,7 +228,7 @@ def update_dashboard(n):
     # Obter os valores atuais para os cards de resumo (que são IDs ou N/A)
     permitido_id = current_state_data.get('permitido', {}).get('value', 'N/A')
     # Mapeia ID para nome para o card "Acessos Permitidos"
-    permitido_current_display = ID_TO_NAME_MAP.get(permitido_id, permitido_id) 
+    permitido_current_display = ID_TO_NAME_MAP.get(permitido_id, permitido_id)
 
     negado_id = current_state_data.get('negado', {}).get('value', 'N/A')
     # Mapeia ID para nome para o card "Acessos Negados"
@@ -293,7 +293,7 @@ def update_dashboard(n):
     # 2. Obter o histórico de eventos para a tabela e contagens
     all_raw_log_entries = []
     for attr in ATTRIBUTES_FOR_LOG:
-        historical_values = get_historical_data_for_attribute(attr, LASTN_LOG_ENTRIES) 
+        historical_values = get_historical_data_for_attribute(attr, LASTN_LOG_ENTRIES)
         for entry in historical_values:
             all_raw_log_entries.append({
                 'timestamp_utc': entry.get('recvTime', ''),
@@ -351,4 +351,4 @@ def update_dashboard(n):
     )
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="localhost", port=5000)
