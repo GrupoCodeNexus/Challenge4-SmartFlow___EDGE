@@ -4,13 +4,28 @@
 #include <LiquidCrystal_I2C.h>
 #include <SPI.h>
 #include <MFRC522.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
 
-// --- Pinos RFID
+// --- WiFi e MQTT ---
+const char* SSID = "Wokwi-GUEST";
+const char* PASSWORD = "";
+const char* BROKER_MQTT = "130.131.16.56";
+const int BROKER_PORT = 1883;
+const char* ID_MQTT = "fiware_nexus_003";
+
+// --- Tópicos MQTT ---
+const char* TOPICO_CMD = "/TEF/NEXUScode3/cmd";
+const char* TOPICO_ESTADO = "/TEF/NEXUScode3/attrs/s";
+const char* TOPICO_PERMITIDO = "/TEF/NEXUScode3/attrs/a";
+const char* TOPICO_NEGADO = "/TEF/NEXUScode3/attrs/n";
+const char* TOPICO_ABERTO = "/TEF/NEXUScode3/attrs/o";
+const char* TOPICO_FECHADO = "/TEF/NEXUScode3/attrs/c";
+
+// --- Pinos ---
 #define SS_PIN 5
 #define RST_PIN 4
-
-// --- Pinos de controle
-#define SERVO1_PIN 2
+#define SERVO1_PIN 13
 #define SERVO2_PIN 12
 #define SERVO3_PIN 14
 #define GREEN_LED 26
@@ -18,28 +33,67 @@
 #define BUZZER_PIN 33
 #define YELLOW_LED 27
 
-// --- Objetos
+WiFiClient espClient;
+PubSubClient MQTT(espClient);
 Servo servo1, servo2, servo3;
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 MFRC522 rfid(SS_PIN, RST_PIN);
 
-// --- UIDs válidos
 const String UID1_KEYS[] = { "D3 16 CF 9A", "4D 2E AB 10" };
 const String UID2 = "BA AD DF 86";
 const String UID3 = "46 A2 8A 3F";
 const String MASTER_ID = "B3 9A 3A DA";
 const String ID_LIBERACAO = "D2 DD 56 1B";
 
-// --- Estado
 bool portaAberta = false;
 bool modoLiberado = false;
 unsigned long tempoLiberacaoStart = 0;
-const unsigned long TEMPO_LIMITE_LIBERACAO = 10000; // 10 segundos
+const unsigned long TEMPO_LIMITE_LIBERACAO = 10000;
 String ultimoCartao = "";
 String uidLiberado = "";
 
+void negarAcesso(String msg, String uid);
+void mostrarTelaDeEspera();
+void fecharTodosServos(String uid);
+
+void initWiFi() {
+  delay(10);
+  Serial.println("Conectando-se ao Wi-Fi...");
+  WiFi.begin(SSID, PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWi-Fi conectado. IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+void mqtt_callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Mensagem recebida no tópico: ");
+  Serial.println(topic);
+}
+
+void reconnectMQTT() {
+  while (!MQTT.connected()) {
+    Serial.print("Conectando ao MQTT...");
+    if (MQTT.connect(ID_MQTT)) {
+      Serial.println("Conectado.");
+      MQTT.subscribe(TOPICO_CMD);
+    } else {
+      Serial.print("Erro: ");
+      Serial.print(MQTT.state());
+      Serial.println(" tentando novamente em 2 segundos...");
+      delay(2000);
+    }
+  }
+}
+
 void setup() {
   Serial.begin(115200);
+  initWiFi();
+  MQTT.setServer(BROKER_MQTT, BROKER_PORT);
+  MQTT.setCallback(mqtt_callback);
+
   SPI.begin();
   rfid.PCD_Init();
 
@@ -54,7 +108,9 @@ void setup() {
   servo1.attach(SERVO1_PIN, 500, 2400);
   servo2.attach(SERVO2_PIN, 500, 2400);
   servo3.attach(SERVO3_PIN, 500, 2400);
-  fecharTodosServos();
+  servo1.write(90); 
+  servo2.write(90);
+  servo3.write(90);
 
   lcd.init();
   lcd.backlight();
@@ -65,11 +121,12 @@ void setup() {
 }
 
 void loop() {
-  // --- Verifica se o tempo do modo liberado expirou
+  if (!MQTT.connected()) reconnectMQTT();
+  MQTT.loop();
+
   if (modoLiberado && millis() - tempoLiberacaoStart > TEMPO_LIMITE_LIBERACAO) {
     modoLiberado = false;
     digitalWrite(YELLOW_LED, LOW);
-    Serial.println("Tempo de liberacao expirou.");
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("Tempo expirado");
@@ -77,38 +134,29 @@ void loop() {
     mostrarTelaDeEspera();
   }
 
-  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) return;
-
   String uidStr = "";
-  for (byte i = 0; i < rfid.uid.size; i++) {
-    uidStr += String(rfid.uid.uidByte[i] < 0x10 ? "0" : "");
-    uidStr += String(rfid.uid.uidByte[i], HEX);
-    if (i < rfid.uid.size - 1) uidStr += " ";
-  }
-  uidStr.toUpperCase();
-  Serial.println("Lido: " + uidStr);
+  if (Serial.available()) {
+    uidStr = Serial.readStringUntil('\n');
+    uidStr.trim(); // Remove espaços extras e quebras de linha
+    uidStr.toUpperCase();
+    Serial.println("UID recebido: " + uidStr);
+} else {
+  return;
+}
 
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Verificando...");
   delay(1000);
 
-  // --- Fechamento com mesmo cartão
   if (portaAberta && uidStr == ultimoCartao) {
-    fecharTodosServos();
-    Serial.println("Fechando...");
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Porta fechada");
-    delay(2000);
-    mostrarTelaDeEspera();
+    fecharTodosServos(uidStr);
     portaAberta = false;
     ultimoCartao = "";
     uidLiberado = "";
     return;
   }
 
-  // --- Master abre todos
   if (uidStr == MASTER_ID) {
     abrirTodosServos();
     portaAberta = true;
@@ -118,50 +166,41 @@ void loop() {
     return;
   }
 
-  // --- Ativa modo liberado
   if (uidStr == ID_LIBERACAO) {
     modoLiberado = true;
-    uidLiberado = "";
     tempoLiberacaoStart = millis();
     digitalWrite(YELLOW_LED, HIGH);
-    Serial.println("Modo liberado ativado.");
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Liberado acesso");
-    lcd.setCursor(0, 1);
-    lcd.print("Use seu cartao");
-    delay(2000);
-    mostrarTelaDeEspera();
     return;
   }
 
-  // --- Durante modo liberado, permite abrir servo com cartão válido
   if (!portaAberta && modoLiberado) {
+    bool acessoConcedido = false;
     if (isInArray(uidStr, UID1_KEYS, sizeof(UID1_KEYS) / sizeof(UID1_KEYS[0]))) {
       abrirPorta(servo1, uidStr);
+      acessoConcedido = true;
     } else if (uidStr == UID2) {
       abrirPorta(servo2, uidStr);
+      acessoConcedido = true;
     } else if (uidStr == UID3) {
       abrirPorta(servo3, uidStr);
-    } else {
-      negarAcesso("UID invalido");
-      return;
+      acessoConcedido = true;
     }
 
-    uidLiberado = uidStr;
-    portaAberta = true;
-    ultimoCartao = uidStr;
-    modoLiberado = false;
-    digitalWrite(YELLOW_LED, LOW);
+    if (acessoConcedido) {
+      portaAberta = true;
+      ultimoCartao = uidStr;
+      modoLiberado = false;
+      digitalWrite(YELLOW_LED, LOW);
+    } else {
+      negarAcesso("UID invalido", uidStr);
+    }
     return;
   }
 
-  // --- Caso geral de negação
-  negarAcesso("Acesso negado");
+  negarAcesso("Acesso negado", uidStr);
   digitalWrite(YELLOW_LED, LOW);
 }
 
-// --- Função auxiliar para verificar se valor está no array
 bool isInArray(String val, const String arr[], size_t size) {
   for (size_t i = 0; i < size; i++) {
     if (val == arr[i]) return true;
@@ -169,21 +208,20 @@ bool isInArray(String val, const String arr[], size_t size) {
   return false;
 }
 
-void abrirPorta(Servo &servo, String input) {
-  Serial.println("Acesso permitido: " + input);
+void abrirPorta(Servo &servo, String uid) {
+  MQTT.publish(TOPICO_PERMITIDO, uid.c_str());
+  MQTT.publish(TOPICO_ABERTO, uid.c_str());
+  MQTT.publish(TOPICO_ESTADO, "aberto");
+
   digitalWrite(GREEN_LED, HIGH);
   digitalWrite(BUZZER_PIN, HIGH);
-  digitalWrite(YELLOW_LED, LOW); // Apaga LED amarelo ao liberar
-
   servo.write(0);
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("Acesso permitido");
+  lcd.print("Acesso Permitido");
   delay(1000);
-
   digitalWrite(GREEN_LED, LOW);
   digitalWrite(BUZZER_PIN, LOW);
-
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Passe o mesmo");
@@ -192,12 +230,15 @@ void abrirPorta(Servo &servo, String input) {
 }
 
 void abrirTodosServos() {
-  Serial.println("MASTER: Abrindo todos os servos...");
+  MQTT.publish(TOPICO_PERMITIDO, MASTER_ID.c_str());
+  MQTT.publish(TOPICO_ABERTO, MASTER_ID.c_str());
+  MQTT.publish(TOPICO_ESTADO, "aberto");
+
   digitalWrite(GREEN_LED, HIGH);
   digitalWrite(BUZZER_PIN, HIGH);
-  servo1.write(0);
-  servo2.write(0);
-  servo3.write(0);
+  servo1.write(180);
+  servo2.write(180);
+  servo3.write(180);
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("MASTER liberado!");
@@ -207,29 +248,34 @@ void abrirTodosServos() {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Passe o mesmo");
-  lcd.setCursor(0, 1);
+  lcd.setCursor(1, 0);
   lcd.print("ID p/ fechar");
 }
 
-void fecharTodosServos() {
+void fecharTodosServos(String uid) {
+  MQTT.publish(TOPICO_FECHADO, uid.c_str());
+  MQTT.publish(TOPICO_ESTADO, "fechado");
+
   servo1.write(90);
   servo2.write(90);
   servo3.write(90);
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Porta fechada");
+  delay(2000);
+  mostrarTelaDeEspera();
 }
 
-void negarAcesso(String msg) {
-  Serial.println(msg);
+void negarAcesso(String msg, String uid) {
+  MQTT.publish(TOPICO_NEGADO, uid.c_str());
   digitalWrite(RED_LED, HIGH);
   digitalWrite(BUZZER_PIN, HIGH);
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Acesso negado");
-  lcd.setCursor(0, 1);
-  lcd.print(msg);
   delay(1000);
   digitalWrite(RED_LED, LOW);
   digitalWrite(BUZZER_PIN, LOW);
-  digitalWrite(YELLOW_LED, LOW);
   mostrarTelaDeEspera();
 }
 
@@ -237,6 +283,6 @@ void mostrarTelaDeEspera() {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Passe o cartao");
-  Serial.println("Aguardando cartao...");
   digitalWrite(YELLOW_LED, LOW);
+  Serial.println("Aguardando cartao...");
 }
