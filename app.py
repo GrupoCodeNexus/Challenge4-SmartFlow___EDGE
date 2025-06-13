@@ -36,7 +36,7 @@ ATTRIBUTES_FOR_SUMMARY_COUNTS = ['aberto', 'fechado']
 
 ATTRIBUTES_FOR_LOG = ['permitido', 'negado', 'aberto', 'fechado', 'state']
 
-# AJUSTADO PARA O LIMITE DO SEU FIWARE
+# AJUSTADO PARA O LIMITE DO SEU FIWARE (100)
 LASTN_LOG_ENTRIES = 100 
 LASTN_FOR_SUMMARY_COUNTS = 100 
 
@@ -111,7 +111,7 @@ app.title = "NEXUScode3 Dashboard"
 
 # Layout do Dashboard
 app.layout = dbc.Container([
-    html.H1("Dashboard - NEXUScode3", className="text-center my-4"),
+    html.H1("SmartFlow - Carrinho 3", className="text-center my-4"),
 
     dcc.Interval(id="interval-component", interval=5000, n_intervals=0),
 
@@ -120,11 +120,12 @@ app.layout = dbc.Container([
             dbc.Card([
                 dbc.CardHeader("Estado Atual do Dispositivo"),
                 dbc.CardBody([
-                    html.H4(id="estado-card-title", className="card-title text-center"),
-                    html.P("Última atualização:", className="card-text text-muted text-center", style={"font-size": "0.9em"}),
-                    html.P(id="timestamp-card", className="card-text text-muted text-center", style={"font-size": "0.9em"})
+                    # Texto do estado será branco devido a `text-white`
+                    html.H4(id="estado-card-title", className="card-title text-center text-white"), 
+                    html.P("Última atualização:", className="card-text text-center text-white", style={"font-size": "0.9em"}),
+                    html.P(id="timestamp-card", className="card-text text-center text-white", style={"font-size": "0.9em"})
                 ])
-            ], color="primary", inverse=True, className="text-center m-2 shadow"),
+            ], color="primary", inverse=True, className="text-center m-2 shadow"), # `inverse=True` já faz o texto branco
             md=12
         )
     ], className="mb-4"),
@@ -132,14 +133,14 @@ app.layout = dbc.Container([
     dbc.Row([
         dbc.Col(
             dbc.Card([
-                dbc.CardHeader("Acessos Permitidos (Último)"), # Removi "(ID)" já que agora será nome
+                dbc.CardHeader("Último Acesso permitido"),
                 dbc.CardBody(html.H3(id="permitido-card", className="card-title text-center"))
             ], color="success", outline=True, className="text-center m-2 shadow"),
             md=3
         ),
         dbc.Col(
             dbc.Card([
-                dbc.CardHeader("Acessos Negados (Último)"), # Removi "(ID)" já que agora será nome
+                dbc.CardHeader("Último Acesso Negado"),
                 dbc.CardBody(html.H3(id="negado-card", className="card-title text-center"))
             ], color="danger", outline=True, className="text-center m-2 shadow"),
             md=3
@@ -170,8 +171,8 @@ app.layout = dbc.Container([
                 columns=[
                     {"name": "Horário (São Paulo)", "id": "Horário (São Paulo)"},
                     {"name": "Estado", "id": "State"},
-                    {"name": "Permitido", "id": "Permitido"}, # Esta coluna agora exibirá nomes
-                    {"name": "Negado", "id": "Negado"}, # Esta coluna agora exibirá nomes
+                    {"name": "Permitido", "id": "Permitido"},
+                    {"name": "Negado", "id": "Negado"},
                     {"name": "Aberto", "id": "Aberto"},
                     {"name": "Fechado", "id": "Fechado"},
                 ],
@@ -225,37 +226,94 @@ def update_dashboard(n):
     state = current_state_data.get('state', {}).get('value', 'Indefinido')
     
     # Obter os valores atuais para os cards de resumo (que são IDs ou N/A)
-    # E mapear para nomes
     permitido_id = current_state_data.get('permitido', {}).get('value', 'N/A')
-    permitido_current = ID_TO_NAME_MAP.get(permitido_id, permitido_id) # Mapeia ID para nome
+    # Mapeia ID para nome para o card "Acessos Permitidos"
+    permitido_current_display = ID_TO_NAME_MAP.get(permitido_id, permitido_id) 
 
     negado_id = current_state_data.get('negado', {}).get('value', 'N/A')
-    negado_current = ID_TO_NAME_MAP.get(negado_id, negado_id) # Mapeia ID para nome
+    # Mapeia ID para nome para o card "Acessos Negados"
+    negado_current_display = ID_TO_NAME_MAP.get(negado_id, negado_id)
     
+    # Lógica para mostrar o nome junto ao estado atual (se relevante)
+    state_display = f"Estado: {state}"
+    
+    # Buscar os últimos eventos para tentar inferir a pessoa associada ao estado
+    # Puxa os últimos N eventos de 'state', 'permitido' e 'negado'
+    last_state_events = get_historical_data_for_attribute('state', 1)
+    last_permitido_events = get_historical_data_for_attribute('permitido', 1)
+    last_negado_events = get_historical_data_for_attribute('negado', 1)
+
+    latest_person_id = None
+    latest_person_time = datetime.datetime.min.replace(tzinfo=pytz.utc)
+
+    # Verifica o último permitido
+    if last_permitido_events:
+        try:
+            p_time_str = last_permitido_events[0].get('recvTime', '')
+            p_time = datetime.datetime.strptime(p_time_str, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=pytz.utc)
+            if p_time > latest_person_time:
+                latest_person_time = p_time
+                latest_person_id = last_permitido_events[0].get('attrValue', '')
+        except ValueError: # Fallback for different timestamp format
+            try:
+                p_time_str = last_permitido_events[0].get('recvTime', '')
+                p_time = datetime.datetime.strptime(p_time_str, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=pytz.utc)
+                if p_time > latest_person_time:
+                    latest_person_time = p_time
+                    latest_person_id = last_permitido_events[0].get('attrValue', '')
+            except ValueError:
+                pass
+
+
+    # Verifica o último negado (se for mais recente)
+    if last_negado_events:
+        try:
+            n_time_str = last_negado_events[0].get('recvTime', '')
+            n_time = datetime.datetime.strptime(n_time_str, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=pytz.utc)
+            if n_time > latest_person_time:
+                latest_person_time = n_time
+                latest_person_id = last_negado_events[0].get('attrValue', '')
+        except ValueError: # Fallback for different timestamp format
+            try:
+                n_time_str = last_negado_events[0].get('recvTime', '')
+                n_time = datetime.datetime.strptime(n_time_str, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=pytz.utc)
+                if n_time > latest_person_time:
+                    latest_person_time = n_time
+                    latest_person_id = last_negado_events[0].get('attrValue', '')
+            except ValueError:
+                pass
+
+    
+    # Se encontramos um ID de pessoa recente, e o estado é "aberto" ou "fechado"
+    if latest_person_id and (state == "aberto" or state == "fechado"):
+        person_name = ID_TO_NAME_MAP.get(latest_person_id, latest_person_id)
+        state_display = f"Estado: {state} (por {person_name})"
+
+
     # 2. Obter o histórico de eventos para a tabela e contagens
     all_raw_log_entries = []
     for attr in ATTRIBUTES_FOR_LOG:
-        # Usar o limite de 100 para todas as requisições de histórico
         historical_values = get_historical_data_for_attribute(attr, LASTN_LOG_ENTRIES) 
         for entry in historical_values:
             all_raw_log_entries.append({
                 'timestamp_utc': entry.get('recvTime', ''),
                 'attribute_name': attr,
-                'attribute_value': entry.get('attrValue', 'N/A')
+                'attribute_value': entry.get('attrValue', 'N/A') # Garante N/A para valores nulos/vazios
             })
     
     # Organizar os dados brutos em um dicionário agrupado por timestamp para a tabela
     grouped_by_timestamp = {}
     for entry in all_raw_log_entries:
         ts_sp = convert_utc_to_sao_paulo(entry['timestamp_utc'])
+        
         if ts_sp not in grouped_by_timestamp:
             grouped_by_timestamp[ts_sp] = {
                 "Horário (São Paulo)": ts_sp,
-                "State": "",
-                "Permitido": "",
-                "Negado": "",
-                "Aberto": "",
-                "Fechado": ""
+                "State": "N/A", # Inicializa com N/A
+                "Permitido": "N/A", # Inicializa com N/A
+                "Negado": "N/A", # Inicializa com N/A
+                "Aberto": "N/A", # Inicializa com N/A
+                "Fechado": "N/A" # Inicializa com N/A
             }
         
         attr_original_name = entry['attribute_name']
@@ -264,15 +322,11 @@ def update_dashboard(n):
         if attr_original_name == 'state':
             grouped_by_timestamp[ts_sp]["State"] = attr_value
         elif attr_original_name == 'permitido':
-            # Mapear o ID do permitido para o nome na tabela
-            grouped_by_timestamp[ts_sp]["Permitido"] = ID_TO_NAME_MAP.get(attr_value, attr_value)
+            grouped_by_timestamp[ts_sp]["Permitido"] = ID_TO_NAME_MAP.get(attr_value, attr_value) # Mapeia ID para nome na tabela
         elif attr_original_name == 'negado':
-            # Mapear o ID do negado para o nome na tabela
-            grouped_by_timestamp[ts_sp]["Negado"] = ID_TO_NAME_MAP.get(attr_value, attr_value)
+            grouped_by_timestamp[ts_sp]["Negado"] = ID_TO_NAME_MAP.get(attr_value, attr_value) # Mapeia ID para nome na tabela
         elif attr_original_name == 'aberto':
-            # Para 'aberto' e 'fechado' na tabela, você quer o ID ou um marcador de evento?
-            # Assumindo que você quer o ID (o que 'B3 9A 3A DA' sugere para cada evento)
-            grouped_by_timestamp[ts_sp]["Aberto"] = attr_value 
+            grouped_by_timestamp[ts_sp]["Aberto"] = attr_value
         elif attr_original_name == 'fechado':
             grouped_by_timestamp[ts_sp]["Fechado"] = attr_value
 
@@ -283,14 +337,13 @@ def update_dashboard(n):
     table_data.sort(key=lambda x: datetime.datetime.strptime(x['Horário (São Paulo)'], '%d/%m/%Y %H:%M:%S') if x['Horário (São Paulo)'] != "N/A" else datetime.datetime.min, reverse=True)
     
     # Contagens para os cards de "Aberturas" e "Fechamentos"
-    # Usar o limite de 100 para a contagem
     aberto_count = len(get_historical_data_for_attribute('aberto', LASTN_FOR_SUMMARY_COUNTS))
     fechado_count = len(get_historical_data_for_attribute('fechado', LASTN_FOR_SUMMARY_COUNTS))
 
     return (
-        f"Estado: {state}",
-        permitido_current,
-        negado_current,
+        state_display, # Agora inclui o nome da pessoa, se aplicável
+        permitido_current_display,
+        negado_current_display,
         aberto_count,
         fechado_count,
         f"Atualizado em: {current_time_str}",
