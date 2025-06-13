@@ -7,12 +7,17 @@ import requests
 import pytz
 
 # --- Configurações da VM e FIWARE (Estes são os DADOS da sua VM) ---
-# ATENÇÃO: SUBSTITUA 'YOUR_VM_IP_ADDRESS' PELO ENDEREÇO IP REAL DA SUA VM
-VM_IP_ADDRESS = "130.131.16.56" # <-- Este é o IP da SUA VM
+# ATENÇÃO: VERIFIQUE E CONFIRME ESTE IP!
+VM_IP_ADDRESS = "130.131.16.56" # <--- **CONFIRME ESTE IP!**
 PORT_STH = 8666 # Porta padrão do STH-Comet na VM
-FIWARE_SERVICE = 'smart'
-FIWARE_SERVICE_PATH = '/'
-NEXUSCODE_DEVICE_ID = "urn:ngsi-ld:NEXUScode:003" # ID da sua entidade NEXUScode3 no Fiware
+FIWARE_SERVICE = 'smart' # Conforme seu exemplo de configuração Fiware
+FIWARE_SERVICE_PATH = '/' # Conforme seu exemplo de configuração Fiware
+
+# ID e Tipo da entidade conforme o JSON do seu dispositivo
+NEXUSCODE_DEVICE_ID = "urn:ngsi-ld:NEXUScode:003"
+NEXUSCODE_ENTITY_TYPE = "Acess" # <--- **MUITO IMPORTANTE! CONFIRMADO como "Acess"**
+
+# Atributos que você quer exibir no dashboard
 ATTRIBUTES_TO_FETCH = ['state', 'permitido', 'negado', 'aberto', 'fechado']
 
 # Headers para as requisições ao FIWARE
@@ -23,30 +28,46 @@ FIWARE_HEADERS = {
 
 # --- Funções de Coleta de Dados do FIWARE (Fazem requisição para a VM) ---
 def get_device_data_from_fiware():
+    """Função para obter os dados do dispositivo NEXUScode3 do FIWARE (STH-Comet)."""
     data = {}
     for attr in ATTRIBUTES_TO_FETCH:
-        url = f"http://{VM_IP_ADDRESS}:{PORT_STH}/STH/v1/contextEntities/type/Device/id/{NEXUSCODE_DEVICE_ID}/attributes/{attr}?lastN=1"
+        # CONSTRÓI A URL EXATAMENTE COMO NO SEU POSTMAN, USANDO AS VARIÁVEIS ACIMA
+        url = f"http://{VM_IP_ADDRESS}:{PORT_STH}/STH/v1/contextEntities/type/{NEXUSCODE_ENTITY_TYPE}/id/{NEXUSCODE_DEVICE_ID}/attributes/{attr}?lastN=1"
+        
+        print(f"Tentando acessar URL: {url}") # Para depuração
+
         try:
-            response = requests.get(url, headers=FIWARE_HEADERS, timeout=5)
-            response.raise_for_status()
+            response = requests.get(url, headers=FIWARE_HEADERS, timeout=10) # Aumentei o timeout
+            response.raise_for_status() # Lança uma exceção para códigos de status HTTP de erro (4xx ou 5xx)
             json_data = response.json()
             
+            # Navegar na estrutura da resposta para obter o valor
             if 'contextResponses' in json_data and json_data['contextResponses']:
                 context_element = json_data['contextResponses'][0]['contextElement']
                 if 'attributes' in context_element and context_element['attributes']:
                     attribute_data = context_element['attributes'][0]
                     if 'values' in attribute_data and attribute_data['values']:
+                        # Pega o último valor (o mais recente)
                         data[attr] = attribute_data['values'][0]['attrValue']
                     else:
-                        data[attr] = "N/A"
+                        data[attr] = "N/A" # Atributo sem valores
             else:
-                data[attr] = "N/A"
-        except requests.exceptions.RequestException as e:
-            print(f"Erro ao acessar Fiware STH-Comet para o atributo {attr}: {e}")
-            data[attr] = f"Erro: {e}"
-        except (KeyError, IndexError) as e:
-            print(f"Erro ao processar a resposta do Fiware para o atributo {attr}: {e}")
-            data[attr] = "Erro de Formato"
+                data[attr] = "N/A" # Estrutura de resposta inesperada
+        except requests.exceptions.HTTPError as http_err:
+            print(f"Erro HTTP ao acessar Fiware STH-Comet para o atributo {attr}: {http_err} - Resposta: {response.text if response else 'N/A'}")
+            data[attr] = f"Erro HTTP: {http_err.response.status_code}"
+        except requests.exceptions.ConnectionError as conn_err:
+            print(f"Erro de Conexão ao acessar Fiware STH-Comet para o atributo {attr}: {conn_err}")
+            data[attr] = f"Erro de Conexão: {conn_err}"
+        except requests.exceptions.Timeout as timeout_err:
+            print(f"Timeout ao acessar Fiware STH-Comet para o atributo {attr}: {timeout_err}")
+            data[attr] = f"Timeout"
+        except requests.exceptions.RequestException as req_err:
+            print(f"Erro Inesperado ao acessar Fiware STH-Comet para o atributo {attr}: {req_err}")
+            data[attr] = f"Erro de Requisição: {req_err}"
+        except (KeyError, IndexError, ValueError) as e: # ValueError para JSON parsing
+            print(f"Erro ao processar a resposta JSON do Fiware para o atributo {attr}: {e}")
+            data[attr] = "Erro de Formato JSON"
     return data
 
 # --- Criação do App Flask e Dash (Rodando na sua máquina local) ---
@@ -96,8 +117,14 @@ def update_dashboard(n):
             f"Atualizado em: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
         )
     except Exception as e:
-        return [f"Erro ao obter dados: {e}"] * 6
+        # Este é o catch-all para qualquer erro inesperado.
+        # Os catches mais específicos na função get_device_data_from_fiware()
+        # deverão pegar a maioria dos erros de requisição.
+        print(f"Erro geral no callback de atualização: {e}")
+        return [f"Erro interno no dashboard: {e}"] * 6
 
 # Inicia o servidor Flask na porta 5000, na sua máquina local.
 if __name__ == "__main__":
     server.run(debug=True, host="0.0.0.0", port=5000)
+
+print("Servidor rodando em http://localhost:5000/dashboard/")
