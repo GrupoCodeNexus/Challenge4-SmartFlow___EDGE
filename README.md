@@ -1,4 +1,4 @@
-# SmartFlow2.0 e Módulo de segurança para carrinhos de emergência
+# SmartFlow2.0 e Módulo de segurança para carrinhos de emergência 
 
 Este repositório contém o projeto de controle de acesso desenvolvido para o carrinho de suprimentos "SmartFlow", uma iniciativa do grupo CodeNexus em parceria com o Hospital Infantil Sabará.
 
